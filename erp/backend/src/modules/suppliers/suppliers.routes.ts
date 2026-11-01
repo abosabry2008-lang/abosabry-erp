@@ -1,0 +1,173 @@
+import { Prisma } from '@prisma/client';
+import { Router } from 'express';
+import { z } from 'zod';
+import { ACCOUNT, postJournal } from '../accounting/accounting.service';
+import { ApiError } from '../../lib/api-error';
+import { hasCode, nextCode } from '../../lib/code';
+import { asyncHandler, created, getPaging, noContent, ok, paginated } from '../../lib/http';
+import { round2 } from '../../lib/money';
+import { prisma } from '../../lib/prisma';
+import { asBool, asString } from '../../lib/query';
+import { authenticate, currentUser } from '../../middleware/authenticate';
+import { requirePermission, requireAdmin } from '../../middleware/authorize';
+import { validateBody } from '../../middleware/validate';
+import { getSupplierOpeningBalance, setSupplierOpeningBalance } from './supplier-opening';
+
+const router = Router();
+router.use(authenticate);
+
+const schema = z.object({
+  code: z.string().max(64).nullable().optional(),
+  name: z.string().min(1),
+  contact: z.string().nullable().optional(),
+  email: z.string().email().nullable().optional(),
+  phone: z.string().nullable().optional(),
+  address: z.string().nullable().optional(),
+  taxId: z.string().nullable().optional(),
+  paymentTermDays: z.number().int().min(0).default(30),
+  active: z.boolean().default(true),
+  openingBalance: z.number().optional(),
+});
+
+/** Next free `SUP-0001` style code. */
+async function generateSupplierCode(): Promise<string> {
+  const existing = new Set(
+    (await prisma.supplier.findMany({ select: { code: true } }))
+      .map((s) => s.code)
+      .filter((code): code is string => Boolean(code)),
+  );
+  return nextCode('SUP', existing);
+}
+
+router.get(
+  '/',
+  requirePermission('purchasing.read'),
+  asyncHandler(async (req, res) => {
+    const query = req.query as Record<string, unknown>;
+    const paging = getPaging(query, 50);
+    const search = asString(query.search);
+    const active = asBool(query.active);
+
+    const where: Prisma.SupplierWhereInput = {
+      ...(search
+        ? {
+            OR: [
+              { name: { contains: search, mode: 'insensitive' } },
+              { code: { contains: search, mode: 'insensitive' } },
+              { email: { contains: search, mode: 'insensitive' } },
+              { phone: { contains: search, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+      ...(active === undefined ? {} : { active }),
+    };
+
+    const [total, suppliers] = await Promise.all([
+      prisma.supplier.count({ where }),
+      prisma.supplier.findMany({
+        where,
+        orderBy: { name: 'asc' },
+        skip: paging.skip,
+        take: paging.take,
+        include: { _count: { select: { purchaseOrders: true } } },
+      }),
+    ]);
+    paginated(res, suppliers, total, paging);
+  }),
+);
+
+router.get(
+  '/:id',
+  requirePermission('purchasing.read'),
+  asyncHandler(async (req, res) => {
+    const supplier = await prisma.supplier.findUnique({
+      where: { id: req.params.id },
+      include: { _count: { select: { purchaseOrders: true } } },
+    });
+    if (!supplier) throw ApiError.notFound('Supplier not found');
+    // The opening balance is an administrator-only figure.
+    const user = currentUser(req);
+    if ((user.role ?? '').toUpperCase() !== 'ADMIN') {
+      ok(res, supplier);
+      return;
+    }
+    ok(res, { ...supplier, openingBalance: await getSupplierOpeningBalance(supplier.id) });
+  }),
+);
+
+router.post(
+  '/',
+  requirePermission('purchasing.write'),
+  validateBody(schema),
+  asyncHandler(async (req, res) => {
+    const { openingBalance, code, ...data } = req.body as any;
+    const amount = round2(Number(openingBalance ?? 0));
+    if (amount !== 0 && (currentUser(req).role ?? '').toUpperCase() !== 'ADMIN') {
+      throw ApiError.forbidden('Only an administrator can set an opening balance');
+    }
+    const supplier = await prisma.$transaction(async (tx) => {
+      const resolvedCode = hasCode(code) ? code.trim() : await generateSupplierCode();
+      const created = await tx.supplier.create({ data: { ...data, code: resolvedCode } });
+      if (amount > 0) {
+        await tx.supplier.update({
+          where: { id: created.id },
+          data: { balance: amount },
+        });
+        await postJournal(tx, {
+          memo: `Opening balance for supplier ${created.name}`,
+          reference: `OB-SUPP-${created.id.slice(-6).toUpperCase()}`,
+          sourceType: 'OPENING_SUPPLIER',
+          sourceId: created.id,
+          userId: currentUser(req).id,
+          lines: [
+            { accountCode: ACCOUNT.EQUITY, debit: amount, description: 'Opening capital' },
+            { accountCode: ACCOUNT.PAYABLE, credit: amount, description: 'Opening payable' },
+          ],
+        });
+        const refreshed = await tx.supplier.findUnique({ where: { id: created.id } });
+        return refreshed ?? created;
+      }
+      return created;
+    });
+    created(res, supplier);
+  }),
+);
+
+router.patch(
+  '/:id',
+  requirePermission('purchasing.write'),
+  validateBody(schema.partial()),
+  asyncHandler(async (req, res) => {
+    const user = currentUser(req);
+    const { openingBalance, ...data } = req.body as { openingBalance?: number } & Record<string, unknown>;
+    if (openingBalance !== undefined && (user.role ?? '').toUpperCase() !== 'ADMIN') {
+      throw ApiError.forbidden('Only an administrator can change an opening balance');
+    }
+    const supplier = await prisma.$transaction(async (tx) => {
+      await tx.supplier.update({ where: { id: req.params.id }, data: data as Prisma.SupplierUncheckedUpdateInput });
+      if (openingBalance !== undefined) {
+        await setSupplierOpeningBalance(tx, req.params.id, Number(openingBalance), user.id);
+      }
+      return tx.supplier.findUniqueOrThrow({ where: { id: req.params.id } });
+    });
+    ok(res, supplier);
+  }),
+);
+
+router.delete(
+  '/:id',
+  requirePermission('purchasing.write'),
+  requireAdmin(),
+  asyncHandler(async (req, res) => {
+    const orders = await prisma.purchaseOrder.count({ where: { supplierId: req.params.id } });
+    if (orders > 0) {
+      await prisma.supplier.update({ where: { id: req.params.id }, data: { active: false } });
+      noContent(res);
+      return;
+    }
+    await prisma.supplier.delete({ where: { id: req.params.id } });
+    noContent(res);
+  }),
+);
+
+export default router;

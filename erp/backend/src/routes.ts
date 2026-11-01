@@ -1,0 +1,75 @@
+import { Router } from 'express';
+import accountingRoutes from './modules/accounting/accounting.routes';
+import authRoutes from './modules/auth/auth.routes';
+import categoriesRoutes from './modules/categories/categories.routes';
+import currencyRoutes from './modules/currency/currency.routes';
+import customersRoutes from './modules/customers/customers.routes';
+import customerRoutesRoutes from './modules/customers/customer-routes.routes';
+import expensesRoutes from './modules/expenses/expenses.routes';
+import inventoryRoutes from './modules/inventory/inventory.routes';
+import invoicesRoutes from './modules/invoices/invoices.routes';
+import openingBalancesRoutes from './modules/opening-balances/opening-balances.routes';
+import paymentsRoutes from './modules/payments/payments.routes';
+import posRoutes from './modules/pos/pos.routes';
+import printingRoutes from './modules/printing/printing.routes';
+import productsRoutes from './modules/products/products.routes';
+import productsImportRoutes from './modules/products/products.import.routes';
+import maintenanceRoutes from './modules/maintenance/maintenance.routes';
+import purchasingRoutes from './modules/purchasing/purchasing.routes';
+import reportsRoutes from './modules/reports/reports.routes';
+import returnsRoutes from './modules/returns/returns.routes';
+import salesRoutes from './modules/sales/sales.routes';
+import settingsRoutes from './modules/settings/settings.routes';
+import settlementsRoutes from './modules/settlements/settlements.routes';
+import suppliersRoutes from './modules/suppliers/suppliers.routes';
+import treasuryRoutes from './modules/treasury/treasury.routes';
+import usersRoutes from './modules/users/users.routes';
+import { locationsRouter, warehousesRouter } from './modules/warehouses/warehouses.routes';
+import { runWithTzOffset } from './lib/local-time';
+
+const api = Router();
+
+// Every request carries the browser's UTC offset so printed documents and
+// report groupings use the user's calendar day instead of the server's.
+api.use((req, _res, next) => {
+  const queryOffset = req.query.tzOffset;
+  const raw = Array.isArray(queryOffset)
+    ? queryOffset[0]
+    : (queryOffset ?? req.header('x-tz-offset'));
+  const offset = Number(typeof raw === 'string' ? raw : '');
+  runWithTzOffset(Number.isFinite(offset) ? offset : 0, () => next());
+});
+
+api.get('/health', (_req, res) => {
+  res.json({ status: 'ok', version: '1.0.0' });
+});
+
+api.use('/auth', authRoutes);
+api.use('/users', usersRoutes);
+api.use('/categories', categoriesRoutes);
+api.use('/products', productsImportRoutes);
+api.use('/products', productsRoutes);
+api.use('/warehouses', warehousesRouter);
+api.use('/locations', locationsRouter);
+api.use('/inventory', inventoryRoutes);
+api.use('/suppliers', suppliersRoutes);
+api.use('/purchase-orders', purchasingRoutes);
+api.use('/customers', customersRoutes);
+api.use('/customer-routes', customerRoutesRoutes);
+api.use('/sales-orders', salesRoutes);
+api.use('/returns', returnsRoutes);
+api.use('/pos', posRoutes);
+api.use('/invoices', invoicesRoutes);
+api.use('/payments', paymentsRoutes);
+api.use('/treasury', treasuryRoutes);
+api.use('/settlements', settlementsRoutes);
+api.use('/expenses', expensesRoutes);
+api.use('/opening-balances', openingBalancesRoutes);
+api.use('/currencies', currencyRoutes);
+api.use('/reports', reportsRoutes);
+api.use('/print', printingRoutes);
+api.use('/accounting', accountingRoutes);
+api.use('/settings', settingsRoutes);
+api.use('/maintenance', maintenanceRoutes);
+
+export default api;

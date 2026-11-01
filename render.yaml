@@ -1,0 +1,64 @@
+# ---------------------------------------------------------------------------
+# Render blueprint (fallback path) — one service that serves BOTH the REST API
+# and the compiled Flutter web app, backed by PostgreSQL on Neon.
+#
+# https://render.com/docs/blueprint-spec
+#
+# بالعربي
+#   الملف ده بيتربط بالريبو على GitHub، وRender يبني منه سيرفس واحد
+#   فيه الـ API + موقع الويب (على نفس الدومين، من غير CORS):
+#     https://<your-service>.onrender.com        → التطبيق
+#     https://<your-service>.onrender.com/api/v1 → الـ API
+#
+#   في Render: New + → Blueprint → اختار الريبو → هيلزق DATABASE_URL → Apply.
+#   قاعدة البيانات (PostgreSQL) بتتعمل على Neon مجاناً: https://neon.tech
+#
+#   ملاحظة: الخطة المجانية بتخلي السيرفس ينام بعد 15 دقيقة، فأول فتح بعد فترة
+#   استنى 30–60 ثانية. لو عايز أفضل تجربة، شوف erp/DEPLOY-DOCKER.md
+#   (Koyeb / Hugging Face / Railway).
+# ---------------------------------------------------------------------------
+
+services:
+  - type: web
+    name: erp
+    runtime: node
+    rootDir: erp/backend
+    region: frankfurt          # أقرب منطقة لمصر/الشرق الأوسط
+    plan: free
+
+    # Build: install → generate Prisma client → compile TypeScript → sync schema
+    # (--include=dev because NODE_ENV=production would otherwise skip TypeScript,
+    #  the Prisma CLI and the seed script)
+    # The web bundle lives in erp/web and is served by the API itself.
+    buildCommand: npm install --include=dev && npx prisma generate && npm run build && npx prisma db push --skip-generate
+    startCommand: npm start
+    healthCheckPath: /health
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # ← Neon connection string. Render will ask for it when you create the
+      #   Blueprint; paste the value Neon gives you (it already ends with
+      #   ?sslmode=require). Example:
+      #   postgresql://erp_owner:AbC123@ep-cool-name-123456.eu-central-1.aws.neon.tech/erp?sslmode=require
+      - key: DATABASE_URL
+        sync: false
+
+      # JWT signing secrets — Render generates a random value for each.
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+
+# ---------------------------------------------------------------------------
+# The web app is served from the same origin as the API, so CORS_ORIGIN is
+# not needed. Set it only if a separate front-end host calls the API:
+#   CORS_ORIGIN: https://some-other-site.onrender.com
+#
+# Optional: use Render's own PostgreSQL instead of Neon:
+#   DATABASE_URL:
+#     fromDatabase:
+#       name: erp-db
+#       property: connectionString
+# ---------------------------------------------------------------------------
