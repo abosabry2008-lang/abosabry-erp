@@ -43,26 +43,42 @@ npm run dev
 
 الـ API هيشتغل على `http://localhost:4000`، والويب موجود جاهز في `erp/web`.
 
-## النشر على Vercel + Neon
+## النشر على Netlify + Neon
 
-1. اعمل قاعدة بيانات جديدة على <https://neon.tech> وخُد **Pooled connection string**.
-2. على <https://vercel.com/new> اختار المستودع الجديد (مش القديم).
-3. أضف متغيرات البيئة:
+المشروع مجهّز بالكامل لـ Netlify:
+- `netlify.toml` — يضبط الـ base والبناء وredirects
+- `erp/backend/netlify/functions/api.js` — الـ API كـ Serverless Function
+- `erp/backend/scripts/stage-web.mjs` — ينسخ واجهة Flutter لمجلد النشر
+
+الخطوات:
+
+1. اعمل قاعدة بيانات على <https://neon.tech> وخُد **Pooled connection string**.
+2. على <https://app.netlify.com/start> اختار GitHub ثم المستودع `abosabry-erp`.
+   (لو المستودع مش ظاهر: **Configure Netlify on GitHub** وامنح الوصول له.)
+3. اترك إعدادات البناء كما هي — Netlify هيقرأها من `netlify.toml`.
+4. قبل النشر، من **Site configuration → Environment variables** أضف:
    - `DATABASE_URL` — رابط Neon (بينتهي بـ `?sslmode=require`)
    - `JWT_ACCESS_SECRET` و `JWT_REFRESH_SECRET` — قيم عشوائية قوية
-4. Deploy.
-5. بعد أول نشر، شغّل الـ seed مرة واحدة من جهازك مع نفس `DATABASE_URL`:
+5. Deploy، وبعد ما يخلص اختبر `https://<site>.netlify.app/api/v1/health`.
 
-```powershell
-cd erp\backend
-$env:DATABASE_URL="postgresql://...@...neon.tech/neondb?sslmode=require"
-$env:ADMIN_EMAIL="admin@example.com"
-$env:ADMIN_PASSWORD="كلمة-سر-قوية"
-npx prisma db push --skip-generate
-npm run seed
-```
-
+> لو قاعدة البيانات لسه فاضية، شغّل الـ schema والـ seed مرة واحدة من جهازك بنفس `DATABASE_URL`:
+>
+> ```powershell
+> cd erp\backend
+> $env:DATABASE_URL="postgresql://...@...neon.tech/neondb?sslmode=require"
+> $env:ADMIN_EMAIL="admin@example.com"
+> $env:ADMIN_PASSWORD="كلمة-سر-قوية"
+> npx prisma db push --skip-generate
+> npm run seed
+> ```
+>
 > لو حبيت تجرب ببيانات عرض: `npm run seed:demo` (بيمسح أي بيانات موجودة).
+
+### ملاحظات Netlify
+
+- كل طلب في Serverless Function له حد زمني (10 ثوانٍ على الخطة المجانية تقريبًا)،
+  فعمليات زي استيراد Excel الكبير ممكن تحتاج خطة أعلى أو استضافة Container.
+- أول طلب بعد فترة خمول بيكون أبطأ (Cold start).
 
 ## ملاحظات
 
