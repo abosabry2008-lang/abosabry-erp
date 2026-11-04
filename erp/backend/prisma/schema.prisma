@@ -3,6 +3,9 @@
 
 generator client {
   provider = "prisma-client-js"
+  // `native` covers local development; rhel-openssl-3.0.x is the AWS Lambda
+  // runtime used by Netlify Functions (Node 20).
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {

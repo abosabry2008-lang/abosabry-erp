@@ -17,7 +17,8 @@
     "seed": "ts-node prisma/seed.ts",
     "seed:demo": "ts-node prisma/seed.demo.ts",
     "clear:data": "ts-node prisma/clear-data.ts",
-    "db:reset": "prisma migrate reset --force && npm run seed"
+    "db:reset": "prisma migrate reset --force && npm run seed",
+    "stage:web": "node scripts/stage-web.mjs"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"
@@ -31,6 +32,7 @@
     "express": "^4.19.2",
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
+    "serverless-http": "^3.2.0",
     "morgan": "^1.10.0",
     "zod": "^3.23.8"
   },

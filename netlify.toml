@@ -1,0 +1,34 @@
+# Netlify deployment: Express API as a Function + the Flutter web build as a
+# static site, both on the same origin (the app calls `/api/v1` relatively).
+#
+# Build base is `erp/backend` so node_modules, the Prisma client and the
+# compiled `dist/` live together for the function bundler.
+
+[build]
+  base = "erp/backend"
+  command = "npm install --include=dev && npx prisma generate && npm run build && npm run stage:web"
+  publish = "public"
+  functions = "netlify/functions"
+
+[build.environment]
+  NODE_VERSION = "20"
+  NPM_FLAGS = "--include=dev"
+
+[functions]
+  node_bundler = "esbuild"
+  # Prisma ships a native engine binary that esbuild cannot inline; Netlify
+  # copies these from node_modules into the function bundle instead.
+  external_node_modules = ["@prisma/client", ".prisma"]
+  included_files = ["node_modules/.prisma/**", "node_modules/@prisma/client/**"]
+
+# API -> serverless function
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/:splat"
+  status = 200
+
+# SPA fallback for the Flutter web app
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
